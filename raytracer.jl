@@ -10,6 +10,14 @@ function unit(v)
    return v ./ sqrt(sum(v .* v))
 end
 
+function cross(v1, v2)
+   return Vec3(
+      v1[2] * v2[3] - v1[3] * v2[2],
+      v1[3] * v2[1] - v1[1] * v2[3],
+      v1[1] * v2[2] - v1[2] * v2[1],
+   )
+end
+
 function magnitudel(v)
    return sqrt(sum(v .* v))
 end
@@ -69,6 +77,19 @@ struct Sphere <: Renderable
    idx::Int64
    Sphere(center, radius, prof, idx) =
       new(center, radius, 1 / radius, prof, idx)
+end
+
+struct Triangle <: Renderable
+   v1::Vec3
+   v2::Vec3
+   v3::Vec3
+   e1::Vec3
+   e2::Vec3
+   norm::Vec3
+   prof::PhongProfile
+   idx::Int64
+   Triangle(v1, v2, v3, prof, idx) =
+      new(v1, v2, v3, v2 .- v1, v3 .- v1, unit(cross(v2 .- v1, v3 .- v1)))
 end
 
 mutable struct Room
@@ -189,10 +210,10 @@ end
 
 using Base.Threads
 
-function render(r::Room, canvas::Array{Vec3})
-   for h = 1:r.camera.h
-      for v = 1:r.camera.v
-         @inbounds canvas[v, h] = trace(r, makeRay(room.camera, h, v))
+function render(room::Room, canvas::Array{Vec3})
+   Threads.@threads for h = 1:room.camera.h
+      for v = 1:room.camera.v
+         @inbounds canvas[v, h] = trace(room, makeRay(room.camera, h, v))
       end
    end
    return canvas
@@ -227,8 +248,5 @@ function intersection(room::Room, ray::Ray)
    return nearest
 end
 
-#########################################################
-
 const white = Vec3(1, 1, 1)
 const black = Vec3(0, 0, 0)
-println("tesadfst")
