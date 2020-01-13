@@ -1,13 +1,13 @@
 using StaticArrays
-
+using CUDAnative
 Vec3 = SVector{3,Float32}
 
 function dot(a::Vec3, b::Vec3)
    return a[1] * b[1] + a[2] * b[2] + a[3] * b[3]
 end
 
-function unit(v)
-   return v ./ sqrt(sum(v .* v))
+function unit(v::Vec3)
+   return v ./ CUDAnative.pow(sum(v .* v), .5f)
 end
 
 function cross(v1, v2)
@@ -94,7 +94,7 @@ end
 
 mutable struct Room
    lights::Vector{Light}
-   primitives::Vector{Union{Plane,Sphere}}
+   primitives::Vector{Sphere}
    camera::WorldCamera
 end
 
@@ -125,16 +125,17 @@ function makeRay(cam, h, v)
    return Ray(cam.pos, unit(dir))
 end
 
-function shade(r::Renderable, place::Vec3, room::Room, in::Ray, recursions::Int)
+function shade(r::Sphere, place::Vec3, lights, n_lights, primitives, n_primitives, in::Ray, recursions::Int)
    c = r.prof.ambient
    norm = normal(r, place)
    vec2camera = -1 .* in.dir
-   for l in room.lights
+   for i in 0:n_lights - 1
+      @inbounds l = lights[i]
       vec2Light = l.pos .- place
       dist2Light2 = dot(vec2Light, vec2Light)
 
       unit2Light = unit(vec2Light)
-      res = intersection(room, Ray(place, unit2Light))
+      res = intersection_list(primitives, n_primitives, Ray(place, unit2Light))
 
       if ((!res.didIntersect) || res.t * res.t > dist2Light2)
          diffuse_coeff = dot(unit2Light, norm)
@@ -145,9 +146,8 @@ function shade(r::Renderable, place::Vec3, room::Room, in::Ray, recursions::Int)
 
             spectralMult = dot(norm, unit(unit2Light .+ unit(vec2camera)))
             if spectralMult > 0
-               c = @. c +
-                      l.color * r.prof.spectral * (spectralMult^r.prof.power) /
-                      dist2Light2
+               c = c .+ l.color .* (r.prof.spectral * CUDAnative.pow_fast(spectralMult, r.prof.power) /
+                      dist2Light2)
             end
          end
       end
@@ -208,36 +208,54 @@ function normal(s::Sphere, place::Vec3)
    return unit(place .- s.center)
 end
 
-using Base.Threads
+using CUDAnative, CUDAdrv
+
+using CuArrays
+function render_kernel(primitives, n_primitives, lights, n_lights, camera, canvas)
+   h = blockIdx().x - 1
+   v = threadIdx().x
+   @inbounds canvas[v, h] = trace(primitives, n_primitives, lights, n_lights, makeRay(camera, h, v))
+   return
+
+end
 
 function render(room::Room, canvas::Array{Vec3})
-   Threads.@threads for h = 1:room.camera.h
-      for v = 1:room.camera.v
-         @inbounds canvas[v, h] = trace(room, makeRay(room.camera, h, v))
-      end
-   end
+
+   cu_primitives = CuArray(room.primitives)
+   cu_lights = CuArray(room.lights)
+   cu_canvas = CuArray(canvas)
+
+   @cuda blocks=h threads=v render_kernel(cu_primitives, length(room.primitives), cu_lights, length(room.lights), room.camera, cu_canvas)
+
+   synchronize()
+
+   canvas = collect(cu_canvas)
+
    return canvas
 end
 
-function trace(room::Room, ray::Ray)
-   res = intersection(room, ray)
+function trace(primitives, n_primitives, lights, n_lights, ray::Ray)
+   res = intersection_list(primitives, n_primitives, ray)
    if res.didIntersect
       #return white
+      @inbounds elem = primitives[res.nearest]
       return shade(
-         room.primitives[res.nearest],
+         elem,
          ray.tail .+ ray.dir .* res.t,
-         room,
+         lights, n_lights,
+         primitives, n_primitives,
          ray,
-         1,
+         1
       )
    else
       return black
    end
 end
 
-function intersection(room::Room, ray::Ray)
+function intersection_list(primitives, n_primitives, ray::Ray)
    nearest = IntersectionResult(-1, false, -1)
-   for elem in room.primitives
+   for i in 0:n_primitives - 1
+      @inbounds elem = primitives[i]
       canidate = intersection(elem, ray)
       if canidate.t > 0.001
          if nearest.t > canidate.t || !nearest.didIntersect

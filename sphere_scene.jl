@@ -32,12 +32,7 @@ function render_scene(alpha, beta, x, y)
 
    push!(
       room.primitives,
-      Plane(
-         Vec3(0, -2, -0),
-         (0, 1, 0),
-         PhongProfile(black, Vec3(0.5, 0.5, 0.5), black, 0, 0.5),
-         1,
-      ),
+      Sphere(Vec3(0, -100, 0), 100, PhongProfile(black, (.5, .5, .5), black, 0, 0.5), 2),
    )
 
    push!(
