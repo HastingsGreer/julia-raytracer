@@ -6,7 +6,7 @@ vbox = Box(:v)
 
 push!(win, vbox)
 
-my_canvas = canvas(UserUnit, 800, 800)
+my_canvas = canvas(UserUnit, 1024, 512)
 push!(vbox, my_canvas)
 
 up_slider = slider(-5:.01:5)

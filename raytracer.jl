@@ -7,7 +7,8 @@ function dot(a::Vec3, b::Vec3)
 end
 
 function unit(v::Vec3)
-   return v ./ CUDAnative.pow(sum(v .* v), .5f)
+
+   return v ./ magnitudel(v)
 end
 
 function cross(v1, v2)
@@ -129,7 +130,7 @@ function shade(r::Sphere, place::Vec3, lights, n_lights, primitives, n_primitive
    c = r.prof.ambient
    norm = normal(r, place)
    vec2camera = -1 .* in.dir
-   for i in 0:n_lights - 1
+   for i in 1:n_lights
       @inbounds l = lights[i]
       vec2Light = l.pos .- place
       dist2Light2 = dot(vec2Light, vec2Light)
@@ -186,7 +187,7 @@ function intersection(sphere::Sphere, other::Ray)
    if discriminant < 0
       return IntersectionResult(-1, false, -1)
    end
-   if (-dDotp - sqrt(discriminant) > 0.001)
+   if (-dDotp - sqrt(discriminant) > 0.0000001)
 
       return IntersectionResult(
          (-dDotp - sqrt(discriminant)) / dot(d, d),
@@ -194,7 +195,7 @@ function intersection(sphere::Sphere, other::Ray)
          sphere.idx,
       )
    end
-   if (-dDotp + sqrt(discriminant) > 0.001)
+   if (-dDotp + sqrt(discriminant) > 0.0000001)
       return IntersectionResult(
          (-dDotp + sqrt(discriminant)) / dot(d, d),
          true,
@@ -212,7 +213,7 @@ using CUDAnative, CUDAdrv
 
 using CuArrays
 function render_kernel(primitives, n_primitives, lights, n_lights, camera, canvas)
-   h = blockIdx().x - 1
+   h = blockIdx().x
    v = threadIdx().x
    @inbounds canvas[v, h] = trace(primitives, n_primitives, lights, n_lights, makeRay(camera, h, v))
    return
@@ -220,16 +221,25 @@ function render_kernel(primitives, n_primitives, lights, n_lights, camera, canva
 end
 
 function render(room::Room, canvas::Array{Vec3})
+   if(true)
 
-   cu_primitives = CuArray(room.primitives)
-   cu_lights = CuArray(room.lights)
-   cu_canvas = CuArray(canvas)
 
-   @cuda blocks=h threads=v render_kernel(cu_primitives, length(room.primitives), cu_lights, length(room.lights), room.camera, cu_canvas)
+      cu_primitives = CuArray(room.primitives)
+      cu_lights = CuArray(room.lights)
+      cu_canvas = CuArray(canvas)
 
-   synchronize()
+      @cuda blocks=room.camera.h threads=room.camera.v render_kernel(cu_primitives, length(room.primitives), cu_lights, length(room.lights), room.camera, cu_canvas)
 
-   canvas = collect(cu_canvas)
+      synchronize()
+
+      canvas .= collect(cu_canvas)
+   else
+      for h=1:room.camera.h
+         for v=1:room.camera.v
+            canvas[v, h] = trace(room.primitives, length(room.primitives), room.lights, length(room.lights), makeRay(room.camera, h, v))
+         end
+      end
+   end
 
    return canvas
 end
@@ -254,7 +264,7 @@ end
 
 function intersection_list(primitives, n_primitives, ray::Ray)
    nearest = IntersectionResult(-1, false, -1)
-   for i in 0:n_primitives - 1
+   for i in 1:n_primitives
       @inbounds elem = primitives[i]
       canidate = intersection(elem, ray)
       if canidate.t > 0.001

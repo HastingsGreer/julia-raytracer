@@ -1,5 +1,5 @@
 include("raytracer.jl")
-function render_scene(alpha, beta, x, y)
+function render_scene(x, y, alpha, beta)
    dirHorizonAngle = x
 
    dirVertAngle = y
@@ -11,8 +11,8 @@ function render_scene(alpha, beta, x, y)
    v = camDirMat * Vec3(0, -1, 0)
    w = camDirMat * Vec3(0, 0, 1)
 
-   horiz =400
-   vert = 400
+   horiz =1024
+   vert = 512
 
    room = Room(
       [],
@@ -32,7 +32,7 @@ function render_scene(alpha, beta, x, y)
 
    push!(
       room.primitives,
-      Sphere(Vec3(0, -100, 0), 100, PhongProfile(black, (.5, .5, .5), black, 0, 0.5), 2),
+      Sphere(Vec3(0, -1002, 0), 1000, PhongProfile(black, (.5, .5, .5), black, 0, 0.5), 1),
    )
 
    push!(
@@ -66,10 +66,10 @@ function render_scene(alpha, beta, x, y)
    )
    push!(room.lights, Light(Vec3(-4, 200, -300), 50000 .* white))
 
-   push!(room.lights, Light(Vec3(-20, 0 , beta), 200 .* Vec3(1, 0, 1)))
+   push!(room.lights, Light(Vec3(-20, 4 , beta), 200 .* Vec3(1, 0, 1)))
 
    push!(room.lights, Light(Vec3(0, 0, 50), 20 .* Vec3(0, 1, 1)))
-   canvas = Array{Vec3}(undef, room.camera.h, room.camera.v)
+   canvas = Array{Vec3}(undef, room.camera.v, room.camera.h)
    render(room, canvas)
    return canvas
 end

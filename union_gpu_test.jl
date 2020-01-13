@@ -24,7 +24,7 @@ println("ji")
 function do_kernel(inp, out)
     i = threadIdx().x
 
-    @inbounds out[i] = doit(inp[i])
+    @inbounds out[i] = length(out)
 
     return nothing
 end
