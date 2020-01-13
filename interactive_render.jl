@@ -6,7 +6,7 @@ vbox = Box(:v)
 
 push!(win, vbox)
 
-my_canvas = canvas(UserUnit, 1024, 512)
+my_canvas = canvas(UserUnit, 1024, 1024)
 push!(vbox, my_canvas)
 
 up_slider = slider(-5:.01:5)
@@ -27,7 +27,7 @@ end
 
 function makeCircle(mouse, up_slider, side_slider)
 
-    arr = render_scene(up_slider, side_slider, (mouse.position.x - 400) / 300, -(mouse.position.y - 400) / 300)
+    arr = render_scene(up_slider, side_slider, (mouse.position.x - 400) / 30, -(mouse.position.y - 400) / 30)
 
 
     return map(to_color, arr)

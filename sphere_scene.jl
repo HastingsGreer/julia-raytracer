@@ -1,4 +1,5 @@
 include("raytracer.jl")
+using Random
 function render_scene(x, y, alpha, beta)
    dirHorizonAngle = x
 
@@ -11,7 +12,7 @@ function render_scene(x, y, alpha, beta)
    v = camDirMat * Vec3(0, -1, 0)
    w = camDirMat * Vec3(0, 0, 1)
 
-   horiz =1024
+   horiz = 512
    vert = 512
 
    room = Room(
@@ -32,7 +33,12 @@ function render_scene(x, y, alpha, beta)
 
    push!(
       room.primitives,
-      Sphere(Vec3(0, -1002, 0), 1000, PhongProfile(black, (.5, .5, .5), black, 0, 0.5), 1),
+      Sphere(
+         Vec3(0, -1002, 0),
+         1000,
+         PhongProfile(black, (0.5, 0.5, 0.5), black, 0, 0.5),
+         1,
+      ),
    )
 
    push!(
@@ -66,9 +72,39 @@ function render_scene(x, y, alpha, beta)
    )
    push!(room.lights, Light(Vec3(-4, 200, -300), 50000 .* white))
 
-   push!(room.lights, Light(Vec3(-20, 4 , beta), 200 .* Vec3(1, 0, 1)))
+   push!(room.lights, Light(Vec3(-20, 4, beta), 200 .* Vec3(1, 0, 1)))
 
    push!(room.lights, Light(Vec3(0, 0, 50), 20 .* Vec3(0, 1, 1)))
+#=
+   m = MersenneTwister(7)
+   for i = 1:30
+      push!(
+         room.lights,
+         Light(
+            Vec3(rand(m, -50:50), rand(m, 0:50), rand(m, -50:50)),
+            Vec3(rand(m, -0:50), rand(m, 0:50), rand(m, 0:50)),
+         ),
+      )
+   end
+   m = MersenneTwister(4)
+   for i = 6:30
+      push!(
+         room.primitives,
+         Sphere(
+            Vec3(rand(m, -5:5), rand(m, 0:5), rand(m, -5:5)),
+            1,
+            PhongProfile(
+               black,
+               Vec3(rand(m, 0:0.01:1), rand(m, 0:0.01:1), rand(m, 0:0.01:1)),
+               white,
+               20,
+               0.5,
+            ),
+            i,
+         ),
+      )
+   end
+=#
    canvas = Array{Vec3}(undef, room.camera.v, room.camera.h)
    render(room, canvas)
    return canvas
