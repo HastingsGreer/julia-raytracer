@@ -5,15 +5,15 @@ function render_scene(x, y, alpha, beta)
 
    dirVertAngle = y
 
-   cameraPosition = Vec3(alpha, 3, -10 + beta)
+   cameraPosition = Vec3(alpha, 3, -5 + beta)
 
    camDirMat = horizmat(dirHorizonAngle) * vertmat(dirVertAngle)
    u = camDirMat * Vec3(1, 0, 0)
    v = camDirMat * Vec3(0, -1, 0)
    w = camDirMat * Vec3(0, 0, 1)
 
-   horiz = 512
-   vert = 512
+   horiz = 1024
+   vert = 1024
 
    room = Room(
       [],
@@ -23,8 +23,8 @@ function render_scene(x, y, alpha, beta)
          u,
          v,
          w,
-         0.2,
-         0.2 * vert / horiz,
+         0.1,
+         0.1 * vert / horiz,
          0.1,
          horiz,
          vert,
@@ -36,7 +36,7 @@ function render_scene(x, y, alpha, beta)
       Sphere(
          Vec3(0, -1002, 0),
          1000,
-         PhongProfile(black, (0.5, 0.5, 0.5), black, 0, 0.5),
+         PhongProfile(black, (0.5, 0.5, 0.5), .4 .* white, 90, 0.5),
          1,
       ),
    )
@@ -66,18 +66,18 @@ function render_scene(x, y, alpha, beta)
       Sphere(
          Vec3(4, 0, 7),
          1,
-         PhongProfile(black, (1, 0.2, 0), (1, 1, 1), 10, 0.5),
+         PhongProfile(black, (1, 0.2, 0), (1, 1, 1), 90, 0.5),
          5,
       ),
    )
-   push!(room.lights, Light(Vec3(-4, 200, -300), 50000 .* white))
-
-   push!(room.lights, Light(Vec3(-20, 4, beta), 200 .* Vec3(1, 0, 1)))
-
-   push!(room.lights, Light(Vec3(0, 0, 50), 20 .* Vec3(0, 1, 1)))
+   push!(room.lights, Light(Vec3(-4, 200, -300), 190000 .* white))
 #=
-   m = MersenneTwister(7)
-   for i = 1:30
+   #push!(room.lights, Light(Vec3(-20, 4, beta), 200 .* Vec3(1, 0, 1)))
+
+   #push!(room.lights, Light(Vec3(0, 0, 50), 20 .* Vec3(0, 1, 1)))
+
+   m = MersenneTwister(4)
+   for i = 1:6
       push!(
          room.lights,
          Light(
@@ -87,7 +87,7 @@ function render_scene(x, y, alpha, beta)
       )
    end
    m = MersenneTwister(4)
-   for i = 6:30
+   for i = 6:11
       push!(
          room.primitives,
          Sphere(

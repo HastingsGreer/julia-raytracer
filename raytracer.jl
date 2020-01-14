@@ -11,6 +11,15 @@ function unit(v::Vec3)
    return v ./ magnitudel(v)
 end
 
+function random_hemisphere(v)
+   x = unit(Vec3(Random.rand() * 2 - 1, Random.rand() * 2 - 1, Random.rand() * 2 - 1))
+   eff = dot(x, v)
+   if(eff) < 0
+      x = x .+ 2*evv.*v
+   end
+   return x
+end
+
 function cross(v1, v2)
    return Vec3(
       v1[2] * v2[3] - v1[3] * v2[2],
@@ -126,7 +135,14 @@ function makeRay(cam, h, v)
    return Ray(cam.pos, unit(dir))
 end
 
-function shade(r::Sphere, place::Vec3, lights, primitives, in::Ray, recursions::Int)
+function shade(
+   r::Sphere,
+   place::Vec3,
+   lights,
+   primitives,
+   in::Ray,
+   ::Val{recursions},
+) where {recursions}
    c = r.prof.ambient
    norm = normal(r, place)
    vec2camera = -1 .* in.dir
@@ -146,11 +162,22 @@ function shade(r::Sphere, place::Vec3, lights, primitives, in::Ray, recursions::
 
             spectralMult = dot(norm, unit(unit2Light .+ unit(vec2camera)))
             if spectralMult > 0
-               c = c .+ l.color .* (r.prof.spectral * CUDAnative.pow_fast(spectralMult, r.prof.power) /
-                      dist2Light2)
+               c = c .+
+                   l.color .* (r.prof.spectral *
+                    CUDAnative.pow_fast(spectralMult, r.prof.power) /
+                    dist2Light2)
             end
          end
       end
+   end
+   if r.prof.reflectivity != 0 && recursions != 0
+      c = c .* (1 - r.prof.reflectivity) .+
+          r.prof.reflectivity .* trace(
+         primitives,
+         lights,
+         Ray(place, norm .* (2 * dot(norm, vec2camera)) .- vec2camera),
+         Val{recursions - 1}(),
+      )
    end
    return c
 end
@@ -214,11 +241,11 @@ using CuArrays
 function render_kernel(primitives, lights, camera, canvas)
    h = blockIdx().x
    v = threadIdx().x + 512 * (blockIdx().y - 1)
-   @inbounds canvas[v, h] = trace(primitives, lights, makeRay(camera, h, v))
+   @inbounds canvas[v, h] = trace(primitives, lights, makeRay(camera, h, v), Val(1))
    return
 
 end
-
+using Base.Threads
 function render(room::Room, canvas::Array{Vec3})
    if(true)
 
@@ -227,23 +254,23 @@ function render(room::Room, canvas::Array{Vec3})
       cu_lights = CuArray(room.lights)
       cu_canvas = CuArray(canvas)
 
-      @cuda blocks=(room.camera.h, 1) threads=512 render_kernel(cu_primitives, cu_lights, room.camera, cu_canvas)
+      @cuda blocks=(room.camera.h, 2) threads=512 render_kernel(cu_primitives, cu_lights, room.camera, cu_canvas)
 
       synchronize()
 
       canvas .= collect(cu_canvas)
    else
-      for h=1:room.camera.h
+      Threads.@threads for h=1:room.camera.h
          for v=1:room.camera.v
-            canvas[v, h] = trace(room.primitives, room.lights, makeRay(room.camera, h, v))
+            canvas[v, h] = sqrt.(trace(room.primitives, room.lights, makeRay(room.camera, h, v), Val(4)))
          end
       end
    end
 
    return canvas
 end
-
-function trace(primitives, lights, ray::Ray)
+const blue = Vec3(.1f0, .1f0, .4f0)
+function trace(primitives, lights, ray::Ray, ::Val{recursions}) where {recursions}
    res = intersection_list(primitives, ray)
    if res.didIntersect
       #return white
@@ -254,10 +281,10 @@ function trace(primitives, lights, ray::Ray)
          lights,
          primitives,
          ray,
-         1
+         Val{recursions}()
       )
    else
-      return black
+      return blue
    end
 end
 

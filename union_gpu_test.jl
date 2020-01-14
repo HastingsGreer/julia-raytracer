@@ -21,10 +21,13 @@ end
 arr2 = Vector{squarer}()
 println("ji")
 
+
+
+
 function do_kernel(inp, out)
     i = threadIdx().x
 
-    @inbounds out[i] = length(out)
+    @inbounds out[i] = CuArrays.randn(3)
 
     return nothing
 end
