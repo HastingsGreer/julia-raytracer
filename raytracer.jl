@@ -1,5 +1,6 @@
 using StaticArrays
 using CUDAnative
+using CuTextures
 Vec3 = SVector{3,Float32}
 
 function dot(a::Vec3, b::Vec3)
@@ -35,11 +36,19 @@ end
 Mat3 = SMatrix{3,3,Float32}
 
 function vertmat(angle)
-   return Mat3(1, 0, 0, 0, cos(angle), -sin(angle), 0, sin(angle), cos(angle))
+   return Mat3(1, 0, 0,
+   0, cos(angle), -sin(angle),
+   0, sin(angle), cos(angle))
 end
 
 function horizmat(angle)
-   return Mat3(cos(angle), 0, -sin(angle), 0, 1, 0, sin(angle), 0, cos(angle))
+   return Mat3(cos(angle), 0, -sin(angle),
+   0, 1, 0,
+   sin(angle), 0, cos(angle))
+end
+
+function twistmat(angle)
+   return Mat3(cos(angle), -sin(angle), 0, sin(angle), cos(angle), 0, 0, 0, 1)
 end
 
 struct WorldCamera
@@ -71,41 +80,10 @@ end
 
 abstract type Renderable end
 
-struct Plane <: Renderable
-   point::Vec3
-   norm::Vec3
-   prof::PhongProfile
-   idx::Int64
-   Plane(point, norm, prof, idx) = new(point, unit(norm), prof, idx)
-end
-
-struct Sphere <: Renderable
-   center::Vec3
-   radius::Float32
-   invradius::Float32
-   prof::PhongProfile
-   idx::Int64
-   Sphere(center, radius, prof, idx) =
-      new(center, radius, 1 / radius, prof, idx)
-end
-
-struct Triangle <: Renderable
-   v1::Vec3
-   v2::Vec3
-   v3::Vec3
-   e1::Vec3
-   e2::Vec3
-   norm::Vec3
-   prof::PhongProfile
-   idx::Int64
-   Triangle(v1, v2, v3, prof, idx) =
-      new(v1, v2, v3, v2 .- v1, v3 .- v1, unit(cross(v2 .- v1, v3 .- v1)))
-end
-
 mutable struct Room
    lights::Vector{Light}
-   primitives::Vector{Sphere}
    camera::WorldCamera
+   volume::Array{Float32, 3}
 end
 
 function WorldCamera(
@@ -136,49 +114,54 @@ function makeRay(cam, h, v)
 end
 
 function shade(
-   r::Sphere,
+   volume,
    place::Vec3,
    lights,
-   primitives,
    in::Ray,
    ::Val{recursions},
 ) where {recursions}
-   c = r.prof.ambient
-   norm = normal(r, place)
+   prof = PhongProfile(black, (0.0f0, 1.0f0, 0.0f0), (1.0f0, 1.0f0, 1.0f0), 20.0f0, 0.5f0)
+
+
+   c = prof.ambient
+   norma = normal(volume, place)
+
+   norm = c .* 0 .+ norma
+
    vec2camera = -1 .* in.dir
    for l in lights
       vec2Light = l.pos .- place
       dist2Light2 = dot(vec2Light, vec2Light)
 
       unit2Light = unit(vec2Light)
-      res = intersection_list(primitives, Ray(place, unit2Light))
+      res = intersectionV(volume, Ray(place .+ .1 .* unit2Light, unit2Light))
 
       if ((!res.didIntersect) || res.t * res.t > dist2Light2)
          diffuse_coeff = dot(unit2Light, norm)
          if diffuse_coeff > 0
-            c = @. c + l.color * diffuse_coeff * r.prof.diffuse / dist2Light2
+            c = @. c + l.color * diffuse_coeff * prof.diffuse / dist2Light2
          end
-         if !(r.prof.spectral == black)
+         if !(prof.spectral == black)
 
             spectralMult = dot(norm, unit(unit2Light .+ unit(vec2camera)))
             if spectralMult > 0
                c = c .+
-                   l.color .* (r.prof.spectral *
-                    CUDAnative.pow_fast(spectralMult, r.prof.power) /
+                   l.color .* (prof.spectral *
+                    CUDAnative.pow_fast(spectralMult, prof.power) /
                     dist2Light2)
             end
          end
       end
    end
-   if r.prof.reflectivity != 0 && recursions != 0
-      c = c .* (1 - r.prof.reflectivity) .+
-          r.prof.reflectivity .* trace(
+   #=if prof.reflectivity != 0 && recursions != 0
+      c = c .* (1 - prof.reflectivity) .+
+          prof.reflectivity .* trace(
          primitives,
          lights,
          Ray(place, norm .* (2 * dot(norm, vec2camera)) .- vec2camera),
          Val{recursions - 1}(),
       )
-   end
+   end =#
    return c
 end
 
@@ -188,60 +171,56 @@ struct IntersectionResult
    nearest::Int64
 end
 
-function intersection(p::Plane, other::Ray)
-   distFromPlane = dot(p.norm, other.tail .- p.point)
-   effectiveness = dot(p.norm, other.dir)
-   t = -distFromPlane / effectiveness
+function getVScaled(volume::CuDeviceTexture, curr_position::Vec3)
+   return volume(
+      curr_position[1] / 512.f0,
+      curr_position[2] / 512.f0,
+      curr_position[3] / 176.f0,
+   )
+end
 
-   if (t > 0.001)
-      return IntersectionResult(t, true, p.idx)
-   else
+function normal(volume::CuDeviceTexture, pos::Vec3)
+   x = (
+      getVScaled(volume, pos .+ (0.1f0, 0f0, 0f0)) -
+      getVScaled(volume, pos .+ (-.1f0, 0f0, 0f0)),
+      getVScaled(volume, pos .+ (0f0, 0.1f0, 0f0)) -
+      getVScaled(volume, pos .+ (0f0, -.1f0, 0f0)),
+      getVScaled(volume, pos .+ (0f0, 0f0, 0.1f0)) -
+      getVScaled(volume, pos .+ (0f0, 0f0, -.1f0)) + .00001f0,
+   )
+   return x ./ magnitudel(x) #unit(x)
+end
+function intersectionV(volume, other::Ray)
+
+   curr_position = other.tail;
+   step::Float32 = 0;
+   t::Float32 = 0
+   for N in 1:120
+      @inbounds step = 1.06 * getVScaled(volume, curr_position)
+
+      if step < .05
+         break
+      end
+
+      t += step
+
+      curr_position = curr_position .+ other.dir .* step
+   end
+
+   if step > .1
       return IntersectionResult(-1, false, -1)
    end
+   return IntersectionResult(t, true, 1)
 end
-
-function normal(p::Plane, place::Vec3)
-   return p.norm
-end
-
-function intersection(sphere::Sphere, other::Ray)
-   p = @. (other.tail - sphere.center) * sphere.invradius
-   d = other.dir .* sphere.invradius
-   dDotp = dot(d, p)
-   discriminant = dDotp * dDotp - dot(d, d) * (dot(p, p) - 1)
-
-   if discriminant < 0
-      return IntersectionResult(-1, false, -1)
-   end
-   if (-dDotp - sqrt(discriminant) > 0.0000001)
-
-      return IntersectionResult(
-         (-dDotp - sqrt(discriminant)) / dot(d, d),
-         true,
-         sphere.idx,
-      )
-   end
-   if (-dDotp + sqrt(discriminant) > 0.0000001)
-      return IntersectionResult(
-         (-dDotp + sqrt(discriminant)) / dot(d, d),
-         true,
-         sphere.idx,
-      )
-   end
-   return IntersectionResult(-1, false, -1)
-end
-
-function normal(s::Sphere, place::Vec3)
-   return unit(place .- s.center)
-end
-
 using CUDAnative, CUDAdrv
 
 using CuArrays
-function render_kernel(primitives, lights, camera, canvas)
+
+
+function render_kernel(volume, lights, camera, canvas)
    h = blockIdx().x
    v = threadIdx().x + 512 * (blockIdx().y - 1)
-   @inbounds canvas[v, h] = trace(primitives, lights, makeRay(camera, h, v), Val(1))
+   @inbounds canvas[v, h] = trace(volume, lights, makeRay(camera, h, v), Val(1))
    return
 
 end
@@ -250,11 +229,11 @@ function render(room::Room, canvas::Array{Vec3})
    if(true)
 
 
-      cu_primitives = CuArray(room.primitives)
+      cu_volume = CuTexture(CuTextureArray(room.volume))
       cu_lights = CuArray(room.lights)
       cu_canvas = CuArray(canvas)
 
-      @cuda blocks=(room.camera.h, 2) threads=512 render_kernel(cu_primitives, cu_lights, room.camera, cu_canvas)
+      @cuda blocks=(room.camera.h, 1) threads=512 render_kernel(cu_volume, cu_lights, room.camera, cu_canvas)
 
       synchronize()
 
@@ -262,24 +241,22 @@ function render(room::Room, canvas::Array{Vec3})
    else
       Threads.@threads for h=1:room.camera.h
          for v=1:room.camera.v
-            canvas[v, h] = sqrt.(trace(room.primitives, room.lights, makeRay(room.camera, h, v), Val(4)))
+            canvas[v, h] = sqrt.(trace(room.volume, room.lights, makeRay(room.camera, h, v), Val(4)))
          end
       end
    end
 
    return canvas
 end
-const blue = Vec3(.1f0, .1f0, .4f0)
-function trace(primitives, lights, ray::Ray, ::Val{recursions}) where {recursions}
-   res = intersection_list(primitives, ray)
+function trace(volume, lights, ray::Ray, ::Val{recursions}) where {recursions}
+   res = intersectionV(volume, ray)
    if res.didIntersect
-      #return white
-      @inbounds elem = primitives[res.nearest]
+      #return white .* res.t
+      ##=@inbounds elem = primitives[res.nearest]
       return shade(
-         elem,
+         volume,
          ray.tail .+ ray.dir .* res.t,
          lights,
-         primitives,
          ray,
          Val{recursions}()
       )
@@ -288,18 +265,6 @@ function trace(primitives, lights, ray::Ray, ::Val{recursions}) where {recursion
    end
 end
 
-function intersection_list(primitives, ray::Ray)
-   nearest = IntersectionResult(-1, false, -1)
-   for elem in primitives
-      canidate = intersection(elem, ray)
-      if canidate.t > 0.001
-         if nearest.t > canidate.t || !nearest.didIntersect
-            nearest = canidate
-         end
-      end
-   end
-   return nearest
-end
-
+const blue = Vec3(.1f0, .1f0, .4f0)
 const white = Vec3(1, 1, 1)
 const black = Vec3(0, 0, 0)

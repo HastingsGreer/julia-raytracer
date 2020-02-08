@@ -1,5 +1,5 @@
 using GtkReactive, Gtk.ShortNames
-include("sphere_scene.jl")
+include("minecraft_scene.jl")
 
 win = Window("circle with radius")
 vbox = Box(:v)
